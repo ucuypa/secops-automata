@@ -8,6 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Process;
 
 class RunNetworkEnumeration implements ShouldQueue
 {
@@ -15,44 +16,32 @@ class RunNetworkEnumeration implements ShouldQueue
 
     public $scanJob;
 
-    /**
-     * Create a new job instance.
-     */
     public function __construct(ScanJob $scanJob)
     {
         $this->scanJob = $scanJob;
     }
 
-    /**
-     * Execute the job.
-     */
     public function handle(): void
     {
-        // Update task state to indicate the background worker has picked it up
-        $this->scanJob->update([
-            'status' => 'RUNNING', 
-            'started_at' => now()
-        ]);
+        // Mark the job as running in the database
+        $this->scanJob->update(['status' => 'RUNNING']);
 
-        try {
-            // Placeholder for Phase 2: Integrating Open-Source Security Tools[cite: 1]
-            // This represents a heavy, long-running task that would normally block the thread[cite: 1]
-            sleep(5); 
+        // Extract the target's IP/Domain
+        $targetDomain = $this->scanJob->target->domain;
 
-            // Securely hold the SUCCESS state and log the raw output[cite: 1]
-            $this->scanJob->update([
-                'status' => 'SUCCESS',
-                'finished_at' => now(),
-                'raw_output' => ['message' => 'Network enumeration completed successfully.']
-            ]);
+        // Execute the Nmap command at the OS level
+        $result = Process::run("nmap -F {$targetDomain}");
+
+        // Handle the results
+        if ($result->successful()) {
+            info("Scan completed for {$targetDomain}:\n" . $result->output());
             
-        } catch (\Exception $e) {
-            // Handle failures and securely log the error[cite: 1]
-            $this->scanJob->update([
-                'status' => 'FAILURE',
-                'finished_at' => now(),
-                'error_message' => $e->getMessage()
-            ]);
+            $this->scanJob->update(['status' => 'DONE']);
+        } else {
+            // Catch errors if Nmap crashes or isn't installed
+            info("Scan failed:\n" . $result->errorOutput());
+            
+            $this->scanJob->update(['status' => 'FAILED']);
         }
     }
 }
